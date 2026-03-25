@@ -1,33 +1,63 @@
 import java.util.*;
+import java.util.concurrent.*;
+
+/**
+ * ============================================================
+ * CLASS - RoomInventory
+ * ============================================================
+ *
+ * Thread-safe inventory management.
+ */
+class RoomInventory {
+    private final Map<String, Integer> roomAvailability;
+
+    public RoomInventory() {
+        roomAvailability = new HashMap<>();
+        roomAvailability.put("Single", 5);
+        roomAvailability.put("Double", 3);
+        roomAvailability.put("Suite", 2);
+    }
+
+    /**
+     * Thread-safe room allocation
+     */
+    public synchronized boolean allocateRoom(String roomType) {
+        int available = roomAvailability.getOrDefault(roomType, 0);
+        if (available > 0) {
+            roomAvailability.put(roomType, available - 1);
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    public synchronized void incrementRoom(String roomType) {
+        roomAvailability.put(roomType, roomAvailability.getOrDefault(roomType, 0) + 1);
+    }
+
+    public synchronized void displayInventory() {
+        System.out.println("\nCurrent Inventory:");
+        for (Map.Entry<String, Integer> entry : roomAvailability.entrySet()) {
+            System.out.println(entry.getKey() + ": " + entry.getValue());
+        }
+    }
+}
 
 /**
  * ============================================================
  * CLASS - Reservation
  * ============================================================
- *
- * Represents a confirmed booking.
  */
 class Reservation {
-    private String reservationId;
-    private String guestName;
-    private String roomType;
+    private static int counter = 100;
+    private final String reservationId;
+    private final String guestName;
+    private final String roomType;
 
-    public Reservation(String reservationId, String guestName, String roomType) {
-        this.reservationId = reservationId;
+    public Reservation(String guestName, String roomType) {
         this.guestName = guestName;
         this.roomType = roomType;
-    }
-
-    public String getReservationId() {
-        return reservationId;
-    }
-
-    public String getGuestName() {
-        return guestName;
-    }
-
-    public String getRoomType() {
-        return roomType;
+        this.reservationId = "R" + counter++;
     }
 
     @Override
@@ -38,139 +68,85 @@ class Reservation {
     }
 }
 
-
 /**
  * ============================================================
- * CLASS - AddOnService
+ * CLASS - BookingService
  * ============================================================
  *
- * Represents an optional service that can be added to a reservation.
+ * Handles bookings concurrently using synchronized blocks.
  */
-class AddOnService {
-    private String name;
-    private double cost;
+class BookingService {
+    private final RoomInventory inventory;
+    private final List<Reservation> confirmedBookings;
 
-    public AddOnService(String name, double cost) {
-        this.name = name;
-        this.cost = cost;
-    }
-
-    public String getName() {
-        return name;
-    }
-
-    public double getCost() {
-        return cost;
-    }
-
-    @Override
-    public String toString() {
-        return name + " ($" + cost + ")";
-    }
-}
-
-
-/**
- * ============================================================
- * CLASS - AddOnServiceManager
- * ============================================================
- *
- * Manages mapping of reservations to selected services.
- */
-class AddOnServiceManager {
-    // Map from reservation ID -> list of selected services
-    private Map<String, List<AddOnService>> reservationServices;
-
-    public AddOnServiceManager() {
-        reservationServices = new HashMap<>();
+    public BookingService(RoomInventory inventory) {
+        this.inventory = inventory;
+        this.confirmedBookings = Collections.synchronizedList(new ArrayList<>());
     }
 
     /**
-     * Adds a service to a reservation
+     * Thread-safe booking attempt
      */
-    public void addServiceToReservation(Reservation reservation, AddOnService service) {
-        reservationServices.computeIfAbsent(reservation.getReservationId(), k -> new ArrayList<>())
-                .add(service);
-        System.out.println("Added service " + service + " to reservation " + reservation.getReservationId());
-    }
-
-    /**
-     * Retrieves list of services for a reservation
-     */
-    public List<AddOnService> getServicesForReservation(Reservation reservation) {
-        return reservationServices.getOrDefault(reservation.getReservationId(), Collections.emptyList());
-    }
-
-    /**
-     * Calculates total cost of add-on services for a reservation
-     */
-    public double calculateTotalAddOnCost(Reservation reservation) {
-        double total = 0.0;
-        for (AddOnService s : getServicesForReservation(reservation)) {
-            total += s.getCost();
+    public void bookRoom(String guestName, String roomType) {
+        synchronized (inventory) { // critical section for inventory check + allocation
+            boolean allocated = inventory.allocateRoom(roomType);
+            if (allocated) {
+                Reservation r = new Reservation(guestName, roomType);
+                confirmedBookings.add(r);
+                System.out.println("Booking confirmed: " + r);
+            } else {
+                System.out.println("Booking failed for " + guestName + ": No availability for " + roomType);
+            }
         }
-        return total;
     }
 
-    /**
-     * Displays all add-on selections
-     */
-    public void displayAllAddOns() {
-        System.out.println("\nAll Add-On Services:");
-        for (Map.Entry<String, List<AddOnService>> entry : reservationServices.entrySet()) {
-            System.out.println("ReservationID: " + entry.getKey() + " -> " + entry.getValue());
+    public void displayConfirmedBookings() {
+        System.out.println("\nConfirmed Bookings:");
+        synchronized (confirmedBookings) {
+            for (Reservation r : confirmedBookings) {
+                System.out.println(r);
+            }
         }
     }
 }
 
-
 /**
  * ============================================================
- * MAIN CLASS - UseCase7AddOnServiceSelection
+ * MAIN CLASS - UseCase11ConcurrentBookingSimulation
  * ============================================================
  *
- * Demonstrates attaching add-on services to reservations.
+ * Demonstrates concurrent booking with thread safety.
  */
-public class UseCase7AddOnServiceSelection {
+public class UseCase11ConcurrentBookingSimulation {
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws InterruptedException {
 
-        // Step 1: Create some confirmed reservations
-        Reservation r1 = new Reservation("R101", "Alice", "Single");
-        Reservation r2 = new Reservation("R102", "Bob", "Suite");
-        Reservation r3 = new Reservation("R103", "Charlie", "Double");
+        RoomInventory inventory = new RoomInventory();
+        BookingService bookingService = new BookingService(inventory);
 
-        // Step 2: Define available add-on services
-        AddOnService breakfast = new AddOnService("Breakfast", 20.0);
-        AddOnService airportPickup = new AddOnService("Airport Pickup", 50.0);
-        AddOnService spa = new AddOnService("Spa Access", 100.0);
-        AddOnService extraBed = new AddOnService("Extra Bed", 30.0);
+        // Simulate multiple guests booking concurrently
+        Runnable guest1 = () -> bookingService.bookRoom("Alice", "Single");
+        Runnable guest2 = () -> bookingService.bookRoom("Bob", "Suite");
+        Runnable guest3 = () -> bookingService.bookRoom("Charlie", "Single");
+        Runnable guest4 = () -> bookingService.bookRoom("Diana", "Double");
+        Runnable guest5 = () -> bookingService.bookRoom("Eve", "Single");
+        Runnable guest6 = () -> bookingService.bookRoom("Frank", "Suite");
 
-        // Step 3: Initialize Add-On Service Manager
-        AddOnServiceManager serviceManager = new AddOnServiceManager();
+        // Use thread pool for concurrency
+        ExecutorService executor = Executors.newFixedThreadPool(6);
+        executor.submit(guest1);
+        executor.submit(guest2);
+        executor.submit(guest3);
+        executor.submit(guest4);
+        executor.submit(guest5);
+        executor.submit(guest6);
 
-        // Step 4: Attach services to reservations
-        serviceManager.addServiceToReservation(r1, breakfast);
-        serviceManager.addServiceToReservation(r1, spa);
+        // Shutdown executor and wait for completion
+        executor.shutdown();
+        executor.awaitTermination(5, TimeUnit.SECONDS);
 
-        serviceManager.addServiceToReservation(r2, airportPickup);
-        serviceManager.addServiceToReservation(r2, spa);
-        serviceManager.addServiceToReservation(r2, extraBed);
-
-        serviceManager.addServiceToReservation(r3, breakfast);
-
-        // Step 5: Display add-ons for individual reservations
-        System.out.println("\nAdd-On Services for Each Reservation:");
-        for (Reservation r : Arrays.asList(r1, r2, r3)) {
-            List<AddOnService> services = serviceManager.getServicesForReservation(r);
-            double totalCost = serviceManager.calculateTotalAddOnCost(r);
-            System.out.println(r);
-            System.out.println("Selected Services: " + services);
-            System.out.println("Total Add-On Cost: $" + totalCost);
-            System.out.println("-------------------------------------");
-        }
-
-        // Step 6: Display all add-on mappings
-        serviceManager.displayAllAddOns();
+        // Display final bookings and inventory
+        bookingService.displayConfirmedBookings();
+        inventory.displayInventory();
     }
 }
